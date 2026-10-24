@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Conda / Virtual Environment
+.venv/
+venv/
+.env
+
+# Data and model files
+data/raw/
+data/processed/
+models/
+results/
+
+# Secrets
+*.key
+.env.*
