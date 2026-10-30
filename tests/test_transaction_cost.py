@@ -59,6 +59,52 @@ def action_for(env, cash, spy):
     np.testing.assert_allclose(action.sum(), 1.0, atol=1e-6)
     return action
 
+def expected_wvm_mu(previous_weights, target_weights, fee):
+    """
+    Self-Financing WVM의 독립적인 이분법 해.
+
+    mu = 1 - fee * sum(
+        abs(mu * target_weights[i] - previous_weights[i])
+    )
+
+    현금(index 0)은 거래비용 계산에서 제외.
+    """
+    previous_weights = np.asarray(
+        previous_weights, dtype=np.float64
+    )
+    target_weights = np.asarray(
+        target_weights, dtype=np.float64
+    )
+
+    assert previous_weights.shape == target_weights.shape
+    np.testing.assert_allclose(previous_weights.sum(), 1.0, atol=1e-6)
+    np.testing.assert_allclose(target_weights.sum(), 1.0, atol=1e-6)
+    assert 0 <= fee < 1
+
+    if fee == 0:
+        return 1.0
+
+    def residual(mu):
+        traded_amount = np.sum(
+            np.abs(
+                mu * target_weights[1:]
+                - previous_weights[1:]
+            )
+        )
+        return mu + fee * traded_amount - 1.0
+
+    low, high = 0.0, 1.0
+
+    for _ in range(200):
+        mid = (low + high) / 2.0
+
+        if residual(mid) > 0:
+            high = mid
+        else:
+            low = mid
+
+    return (low + high) / 2.0
+
 
 def run_wvm(fee):
     env = make_env("wvm", fee)
@@ -67,39 +113,119 @@ def run_wvm(fee):
     # 초기 현금 100% -> 현금 75%, SPY 25%
     action = action_for(env, cash=0.75, spy=0.25)
 
-    _, reward, _, _, _ = env.step(action)
+    previous_weights = np.array(
+        env._final_weights[-1], dtype=np.float64
+    )
+
+    value_before = float(env._portfolio_value)
+
+    # 독립적인 자기금융 방정식으로 기대 mu 계산
+    expected_mu = expected_wvm_mu(
+        previous_weights,
+        action.astype(np.float64),
+        fee,
+    )
+
+    # 수수료 차감 직후의 기대 자산 가치
+    expected_value_after_fee = value_before * expected_mu
+
+    # 실제 거래 시점에 발생하는 기대 수수료
+    expected_fee = value_before * (1.0 - expected_mu)
 
     # D3 -> D4: SPY +10%
-    value = float(env._portfolio_value)
+    expected_growth = 0.75 + 0.25 * 1.10
 
-    # 수수료 없이 기대되는 가치
-    no_fee_value = INITIAL * (0.75 + 0.25 * 1.1)
+    # 수수료 차감 후 시장 가격변동 적용
+    expected_value = expected_value_after_fee * expected_growth
 
-    # 원본 WVM 방식의 매수 거래대금
-    turnover = INITIAL * 0.25
-    expected_fee = fee * turnover
+    _, reward, terminated, truncated, info = env.step(action)
 
-    # 수수료를 현금에서 차감한 뒤 가격변화 적용
-    expected_value = (
-        INITIAL * 0.75
-        - expected_fee
-        + INITIAL * 0.25 * 1.1
+    actual_value = float(env._portfolio_value)
+    actual_fee = float(info["transaction_fee"])
+    actual_mu = float(info["fee_mu"])
+
+    # 수수료 없는 경우의 최종 자산 가치
+    no_fee_value = value_before * expected_growth
+
+    # 가격변동 이후 최종 자산 가치 차이
+    implied_cost = no_fee_value - actual_value
+
+    # 이 값은 실제 거래 시점의 수수료와 다를 수 있음
+    expected_final_value_difference = (
+        no_fee_value - expected_value
     )
+
+    # 1. 자기금융 mu 검증
+    np.testing.assert_allclose(
+        actual_mu,
+        expected_mu,
+        rtol=1e-6,
+        atol=1e-7,
+        err_msg="WVM self-financing mu mismatch",
+    )
+
+    # 2. 실제 거래 시점의 수수료 검증
+    np.testing.assert_allclose(
+        actual_fee,
+        expected_fee,
+        rtol=1e-5,
+        atol=0.02,
+        err_msg="WVM transaction fee mismatch",
+    )
+
+    # 3. 최종 포트폴리오 가치 검증
+    np.testing.assert_allclose(
+        actual_value,
+        expected_value,
+        rtol=1e-6,
+        atol=0.02,
+        err_msg="WVM final portfolio value mismatch",
+    )
+
+    # 4. 수수료 차감 이후의 최종 가치 차이 검증
+    np.testing.assert_allclose(
+        implied_cost,
+        expected_final_value_difference,
+        rtol=1e-5,
+        atol=0.02,
+        err_msg="WVM final value difference mismatch",
+    )
+
+    # 5. Log-return reward 검증
+    expected_reward = np.log(
+        expected_value / value_before
+    ) * env._reward_scaling
+
+    np.testing.assert_allclose(
+        reward,
+        expected_reward,
+        rtol=1e-5,
+        atol=1e-6,
+        err_msg="WVM log-return reward mismatch",
+    )
+
+    assert terminated is False
+    assert truncated is False
 
     return {
         "fee": fee,
-        "value": value,
-        "no_fee_value": no_fee_value,
+        "value": actual_value,
         "expected_value": expected_value,
-        "implied_cost": no_fee_value - value,
-        "expected_cost": expected_fee,
+        "actual_mu": actual_mu,
+        "expected_mu": expected_mu,
+        "actual_fee": actual_fee,
+        "expected_fee": expected_fee,
+        "implied_cost": implied_cost,
+        "expected_final_value_difference": expected_final_value_difference,
         "reward": reward,
     }
 
 
+
+
 def test_wvm():
     print("\n" + "=" * 55)
-    print("[TEST 1] WVM Transaction Cost")
+    print("[TEST 1] WVM Self-Financing Transaction Cost")
     print("=" * 55)
 
     results = [run_wvm(fee) for fee in RATES]
@@ -107,11 +233,14 @@ def test_wvm():
     for result in results:
         print(
             f"Fee rate: {result['fee']:.3%} | "
-            f"Actual value: {result['value']:.2f} | "
-            f"Expected value: {result['expected_value']:.2f} | "
-            f"Implied cost: {result['implied_cost']:.2f} | "
-            f"Expected cost: {result['expected_cost']:.2f}"
+            f"Actual value: {result['value']:.4f} | "
+            f"Expected value: {result['expected_value']:.4f} | "
+            f"Actual fee: {result['actual_fee']:.4f} | "
+            f"Expected fee: {result['expected_fee']:.4f} | "
+            f"mu: {result['actual_mu']:.8f}"
         )
+
+    print("PASS: WVM self-financing mu, fee, value and reward")
 
     return results
 
@@ -205,6 +334,7 @@ def test_trf():
     print("PASS: TRF fixed-point, value and reward")
 
 
+
 if __name__ == "__main__":
     wvm_results = test_wvm()
     test_trf()
@@ -213,18 +343,22 @@ if __name__ == "__main__":
     print("WVM DIAGNOSTIC")
     print("=" * 55)
 
-    actual_costs = [
-        result["implied_cost"] for result in wvm_results
+    actual_fees = [
+        result["actual_fee"] for result in wvm_results
     ]
-    expected_costs = [
-        result["expected_cost"] for result in wvm_results
+    expected_fees = [
+        result["expected_fee"] for result in wvm_results
     ]
 
-    print("Actual costs:", actual_costs)
-    print("Expected costs:", expected_costs)
+    print("Actual transaction fees:", actual_fees)
+    print("Expected transaction fees:", expected_fees)
 
-    if np.allclose(actual_costs, expected_costs, atol=0.02):
-        print("PASS: WVM transaction fees")
-    else:
-        print("FAIL: WVM fees do not match fee-rate calculation")
-        print("FinRL WVM implementation needs inspection.")
+    np.testing.assert_allclose(
+        actual_fees,
+        expected_fees,
+        rtol=1e-5,
+        atol=0.02,
+    )
+
+    print("PASS: WVM transaction fees match self-financing model")
+    print("\nALL TRANSACTION COST TESTS PASSED!")

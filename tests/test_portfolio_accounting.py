@@ -155,18 +155,17 @@ def test_accounting():
         "Final price change accounted for",
     )
 
-    value_before_terminal = float(env._portfolio_value)
+    # 마지막 실제 거래(D5 -> D6)에서 Episode가 종료되어야 함
+    assert terminated is True
+    assert truncated is False
+    print("PASS: Episode terminated on final market transition")
 
-    # 종료 확인용 추가 step
-    obs, reward, terminated, truncated, info = env.step(action)
-
-    assert terminated
+    # 종료 처리 과정에서 포트폴리오 가치가 변하지 않았는지 확인
     assert_close(
         env._portfolio_value,
-        value_before_terminal,
-        "No value change on terminal step",
+        expected_value,
+        "No extra value change at termination",
     )
-
     print("\nALL BASIC ACCOUNTING TESTS PASSED")
 
 
