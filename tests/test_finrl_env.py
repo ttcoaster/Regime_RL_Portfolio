@@ -1,4 +1,5 @@
 
+import pytest
 import numpy as np
 import pandas as pd
 import gymnasium as gym
@@ -39,6 +40,9 @@ def make_synthetic_data():
 
     return pd.DataFrame(rows)
 
+@pytest.fixture
+def df():
+    return make_synthetic_data()
 
 # ==================================================
 # 2. FinRL Environment Factory
@@ -139,22 +143,13 @@ def test_sb3(df):
     print("PASS: SB3 check_env()")
 
 
-# ==================================================
-# Main
-# ==================================================
 
-if __name__ == "__main__":
-    df = make_synthetic_data()
-
-    print("Synthetic Data Preview:")
-    print(df.head())
-    print("\nData shape:", df.shape)
-
-    test_reset(df)
-    test_step(df)
-    test_sb3(df)
-
-    print("\nAll three tests passed!")
+# 기존 import 및 함수 정의들
+# make_synthetic_data()
+# make_env()
+# test_reset()
+# test_step()
+# test_sb3()
 
 
 def test_full_episode(df):
@@ -197,4 +192,24 @@ def test_full_episode(df):
 
     print("PASS: Full Episode")
 
-test_full_episode(df)
+# ==================================================
+# Main
+# ==================================================
+
+# 반드시 모든 함수 정의보다 아래에 배치
+if __name__ == "__main__":
+    data = make_synthetic_data()
+
+    print("Synthetic Data Preview:")
+    print(data.head())
+    print("\nData shape:", data.shape)
+
+    test_reset(data)
+    test_step(data)
+    test_sb3(data)
+    test_full_episode(data)
+
+    print("\nAll four tests passed!")
+
+
+
