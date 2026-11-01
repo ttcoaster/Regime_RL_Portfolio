@@ -1,19 +1,35 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
 .ipynb_checkpoints/
 
-# Conda / Virtual Environment
+# Environments
 .venv/
 venv/
+env/
 .env
+.env.*
+!.env.example
 
-# Data and model files
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Data outputs
 data/raw/
 data/processed/
-models/
-results/
+data/dividends/
 
-# Secrets
-*.key
-.env.*
+# Model checkpoints and experiment outputs
+models/
+outputs/
+logs/
+tensorboard/
+runs/
+
+# Temporary files
+*.log
+*.tmp
